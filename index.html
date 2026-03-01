@@ -900,7 +900,7 @@
                     <select id="v-dateSelect" onchange="jumpToHistory(this.value)"></select>
                 </div>
                 <button id="v-nextBtn" class="nav-btn" onclick="changeHistory(1)">›</button>
-                <button class="print-btn" onclick="saveAssetReportPdf()">📄 PDF印刷</button>
+                <button class="print-btn" onclick="saveAssetReportPdf()">📄 印刷</button>
             </div>
 
             <div class="charts-grid">
@@ -1042,6 +1042,51 @@ function toManFloor(val) {
     return Math.floor(val / 10000);
 }
 
+function getDisplayedManBreakdown(rowTotals) {
+    const entries = FIXED_ORDER.map(cls => {
+        const raw = rowTotals[cls] || 0;
+        const exactMan = raw / 10000;
+        const baseMan = raw > 0 ? Math.floor(exactMan) : 0;
+        return {
+            cls,
+            raw,
+            baseMan,
+            fraction: exactMan - baseMan
+        };
+    });
+
+    const targetMan = Math.round(entries.reduce((sum, entry) => sum + entry.raw, 0) / 10000);
+    let currentMan = entries.reduce((sum, entry) => sum + entry.baseMan, 0);
+    let diff = targetMan - currentMan;
+
+    if (diff > 0) {
+        entries
+            .filter(entry => entry.raw > 0)
+            .sort((a, b) => b.fraction - a.fraction || b.raw - a.raw)
+            .slice(0, diff)
+            .forEach(entry => {
+                entry.baseMan += 1;
+            });
+        currentMan = entries.reduce((sum, entry) => sum + entry.baseMan, 0);
+        diff = targetMan - currentMan;
+    }
+
+    if (diff < 0) {
+        entries
+            .filter(entry => entry.baseMan > 0)
+            .sort((a, b) => a.fraction - b.fraction || a.raw - b.raw)
+            .slice(0, Math.abs(diff))
+            .forEach(entry => {
+                entry.baseMan -= 1;
+            });
+    }
+
+    return {
+        totalMan: targetMan,
+        byClass: Object.fromEntries(entries.map(entry => [entry.cls, entry.baseMan]))
+    };
+}
+
 function getContrastColor(hex) {
     if (!hex || hex.startsWith('hsl')) return '#333';
     const r = parseInt(hex.slice(1, 3), 16),
@@ -1073,18 +1118,25 @@ function toggleItemRows(mode) {
 }
 
 // --- 印刷レポート ---
-function buildAssetReportHtml() {
-    if (viewerIndex < 0 || viewerIndex >= historyData.length) return;
-    const record = historyData[viewerIndex];
-    const [y, m, d] = record.date.split('-');
-    const dateStr = `${y}年${parseInt(m)}月${parseInt(d)}日`;
+function waitForAnimationFrames(count = 2) {
+    return new Promise(resolve => {
+        const step = () => {
+            if (count <= 0) {
+                resolve();
+                return;
+            }
+            count -= 1;
+            requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+    });
+}
 
-    // ストリームグラフ画像の取得準備
-    let imgStream = '';
+async function capturePrintStreamChartImage() {
     const streamTab = document.getElementById('app-stream');
+    const chartCanvas = document.getElementById('chartStream');
     const wasStreamHidden = streamTab.style.display === 'none';
-    
-    // Canvasを画像化するために一時的に可視化してレンダリング
+
     if (wasStreamHidden) {
         streamTab.style.visibility = 'hidden';
         streamTab.style.display = 'block';
@@ -1092,39 +1144,50 @@ function buildAssetReportHtml() {
         streamTab.style.top = '-9999px';
     }
 
-    renderStreamChart(true);
-    if (charts['stream']) {
-        // Print時だけ：アスペクト比維持＆固定サイズで一時レンダリング（横伸び・文字伸び対策）
-        charts['stream'].options.maintainAspectRatio = true;
-        charts['stream'].options.aspectRatio = 2.2;
-        if (typeof charts['stream'].resize === 'function') {
-            charts['stream'].resize(1000, 450);
-        }
-        charts['stream'].update();
-    }
-
-    // Canvasから画像を取得
     try {
-        imgStream = document.getElementById('chartStream').toDataURL();
-    } catch(e) { console.error('Stream Chart Image Error', e); }
+        renderStreamChart(true);
+        await waitForAnimationFrames(3);
 
-    // 表示用の設定に戻す（通常表示は maintainAspectRatio=false）
-    if (charts['stream']) {
-        charts['stream'].options.maintainAspectRatio = false;
-        charts['stream'].options.aspectRatio = 2.2;
-        if (typeof charts['stream'].resize === 'function') {
-            charts['stream'].resize();
+        if (charts['stream']) {
+            charts['stream'].options.maintainAspectRatio = true;
+            charts['stream'].options.aspectRatio = 2.2;
+            if (typeof charts['stream'].resize === 'function') {
+                charts['stream'].resize(1000, 450);
+            }
+            charts['stream'].update('none');
         }
-        charts['stream'].update();
-    }
 
-    // 元に戻す
-    if (wasStreamHidden) {
-        streamTab.style.display = 'none';
-        streamTab.style.visibility = '';
-        streamTab.style.position = '';
-        streamTab.style.top = '';
+        await waitForAnimationFrames(3);
+        return chartCanvas.toDataURL();
+    } catch (e) {
+        console.error('Stream Chart Image Error', e);
+        return '';
+    } finally {
+        if (charts['stream']) {
+            charts['stream'].options.maintainAspectRatio = false;
+            charts['stream'].options.aspectRatio = 2.2;
+            if (typeof charts['stream'].resize === 'function') {
+                charts['stream'].resize();
+            }
+            charts['stream'].update('none');
+        }
+
+        if (wasStreamHidden) {
+            streamTab.style.display = 'none';
+            streamTab.style.visibility = '';
+            streamTab.style.position = '';
+            streamTab.style.top = '';
+        }
     }
+}
+
+async function buildAssetReportHtml() {
+    if (viewerIndex < 0 || viewerIndex >= historyData.length) return;
+    const record = historyData[viewerIndex];
+    const [y, m, d] = record.date.split('-');
+    const dateStr = `${y}年${parseInt(m)}月${parseInt(d)}日`;
+
+    const imgStream = await capturePrintStreamChartImage();
 
     const container = document.getElementById('print-report-container');
     container.innerHTML = ''; 
@@ -1187,8 +1250,8 @@ function buildAssetReportHtml() {
     return { record, html };
 }
 
-function saveAssetReportPdf() {
-    const report = buildAssetReportHtml();
+async function saveAssetReportPdf() {
+    const report = await buildAssetReportHtml();
     if (!report) return;
 
     const originalTitle = document.title;
@@ -1309,7 +1372,6 @@ function generatePrintStreamTableHtml() {
     history.forEach(record => {
         const [y, m, d] = record.date.split('-');
         let rowTotals = {};
-        let grandTotalMan = 0;
 
         record.assets.forEach(a => {
             const c = a.asset_class;
@@ -1317,22 +1379,22 @@ function generatePrintStreamTableHtml() {
             rowTotals[c] += a.val;
         });
 
+        const breakdown = getDisplayedManBreakdown(rowTotals);
+
         html += `<tr>`;
         html += `<td class="s-date">${y}/${parseInt(m)}/${parseInt(d)}</td>`;
 
         let rowHtml = '';
         FIXED_ORDER.forEach(cls => {
-            const val = rowTotals[cls] || 0;
+            const man = breakdown.byClass[cls] || 0;
             let display = '-';
-            if (val !== 0) {
-                const man = toManFloor(val);
-                grandTotalMan += man;
+            if (man !== 0) {
                 display = man.toLocaleString();
             }
-            const color = val === 0 ? '#aaa' : '#000';
+            const color = man === 0 ? '#aaa' : '#000';
             rowHtml += `<td style="color:${color}">${display}</td>`;
         });
-        html += `<td class="s-total">${grandTotalMan.toLocaleString()}</td>`;
+        html += `<td class="s-total">${breakdown.totalMan.toLocaleString()}</td>`;
         html += rowHtml;
         html += `</tr>`;
     });
@@ -1996,11 +2058,12 @@ function renderStreamChart(forPrint = false) {
                         },
                         // 合計を表示
                         footer: function(tooltipItems) {
-                            let sum = 0;
+                            const rowTotals = {};
                             tooltipItems.forEach(function(tooltipItem) {
-                                sum += toManFloor(tooltipItem.parsed.y);
+                                rowTotals[tooltipItem.dataset.label] = tooltipItem.parsed.y;
                             });
-                            return '合計: ' + sum.toLocaleString() + '万円';
+                            const breakdown = getDisplayedManBreakdown(rowTotals);
+                            return '合計: ' + breakdown.totalMan.toLocaleString() + '万円';
                         }
                     }
                 },
@@ -2049,7 +2112,6 @@ function renderStreamTable() {
     history.forEach(record => {
         const [y, m, d] = record.date.split('-');
         let rowTotals = {};
-        let grandTotalMan = 0;
         
         record.assets.forEach(a => {
             const c = a.asset_class;
@@ -2057,23 +2119,23 @@ function renderStreamTable() {
             rowTotals[c] += a.val;
         });
 
+        const breakdown = getDisplayedManBreakdown(rowTotals);
+
         html += `<tr>`;
         html += `<td>${y}/${parseInt(m)}/${parseInt(d)}</td>`;
         
         let rowHtml = '';
         FIXED_ORDER.forEach(cls => {
-            const val = rowTotals[cls] || 0;
+            const man = breakdown.byClass[cls] || 0;
             // 万円単位に変換して、¥記号はつけない
             let display = '-';
-            if (val !== 0) {
-                const man = toManFloor(val);
-                grandTotalMan += man;
+            if (man !== 0) {
                 display = man.toLocaleString();
             }
-            const color = val === 0 ? '#cbd5e1' : 'inherit';
+            const color = man === 0 ? '#cbd5e1' : 'inherit';
             rowHtml += `<td class="cell-val" style="color:${color}">${display}</td>`;
         });
-        html += `<td class="cell-val" style="font-weight:bold;">${grandTotalMan.toLocaleString()}</td>`;
+        html += `<td class="cell-val" style="font-weight:bold;">${breakdown.totalMan.toLocaleString()}</td>`;
         html += rowHtml;
         html += `</tr>`;
     });
