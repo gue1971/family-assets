@@ -1292,7 +1292,7 @@ function generatePrintTableHtml(assets, itemsVisible) {
 }
 
 function generatePrintStreamTableHtml() {
-    const history = [...historyData].sort((a, b) => new Date(b.date) - new Date(a.date));
+    const history = [...getHistoryUpToSelectedDate()].sort((a, b) => new Date(b.date) - new Date(a.date));
     if (!history.length) return '<div>データなし</div>';
 
     let html = '<table class="print-stream-table"><thead><tr><th style="width:12%">日付</th><th style="width:10%">合計</th>';
@@ -1816,6 +1816,18 @@ function updateDashboardAndScroll() {
     }, 50);
 }
 
+function getSelectedViewerDate() {
+    if (viewerIndex < 0 || viewerIndex >= historyData.length) return null;
+    return historyData[viewerIndex]?.date || null;
+}
+
+function getHistoryUpToSelectedDate() {
+    const selectedDate = getSelectedViewerDate();
+    const history = [...historyData].sort((a, b) => new Date(a.date) - new Date(b.date));
+    if (!selectedDate) return history;
+    return history.filter(record => record.date <= selectedDate);
+}
+
 function initViewer() {
     normalizeHistoryData();
 
@@ -1840,7 +1852,9 @@ function initViewer() {
         sel.appendChild(opt);
     }
 
-    viewerIndex = historyData.length - 1;
+    if (viewerIndex < 0 || viewerIndex >= historyData.length) {
+        viewerIndex = historyData.length - 1;
+    }
     renderViewerPage(viewerIndex);
 }
 
@@ -1853,6 +1867,7 @@ function jumpToHistory(val) {
 
 function renderViewerPage(index) {
     if (index < 0 || index >= historyData.length) return;
+    viewerIndex = index;
     const record = historyData[index];
     document.getElementById('v-dateSelect').value = index;
     document.getElementById('v-prevBtn').disabled = (index === 0);
@@ -1898,7 +1913,7 @@ function renderChart(canvasId, legendId, sourceMap, colors, order) {
 
 // ストリームグラフ描画用
 function renderStreamChart(forPrint = false) {
-    const history = [...historyData].sort((a, b) => new Date(a.date) - new Date(b.date));
+    const history = getHistoryUpToSelectedDate();
     if (history.length === 0) return;
 
     const ctx = document.getElementById('chartStream').getContext('2d');
@@ -2011,8 +2026,7 @@ function renderStreamChart(forPrint = false) {
 
 // ストリームテーブル描画用 - コンパクト版実装
 function renderStreamTable() {
-    const history = [...historyData];
-    history.sort((a, b) => new Date(b.date) - new Date(a.date));
+    const history = [...getHistoryUpToSelectedDate()].sort((a, b) => new Date(b.date) - new Date(a.date));
     
     const container = document.getElementById('streamTableContainer');
     if (!history.length) {
