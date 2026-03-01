@@ -1038,6 +1038,10 @@ function formatMan(val) {
     return Math.floor(val / 10000).toLocaleString() + '万円';
 }
 
+function toManFloor(val) {
+    return Math.floor(val / 10000);
+}
+
 function getContrastColor(hex) {
     if (!hex || hex.startsWith('hsl')) return '#333';
     const r = parseInt(hex.slice(1, 3), 16),
@@ -1088,9 +1092,8 @@ function buildAssetReportHtml() {
         streamTab.style.top = '-9999px';
     }
 
-    if (!charts['stream']) {
-        renderStreamChart(true);
-    } else {
+    renderStreamChart(true);
+    if (charts['stream']) {
         // Print時だけ：アスペクト比維持＆固定サイズで一時レンダリング（横伸び・文字伸び対策）
         charts['stream'].options.maintainAspectRatio = true;
         charts['stream'].options.aspectRatio = 2.2;
@@ -1306,30 +1309,31 @@ function generatePrintStreamTableHtml() {
     history.forEach(record => {
         const [y, m, d] = record.date.split('-');
         let rowTotals = {};
-        let grandTotal = 0;
+        let grandTotalMan = 0;
 
         record.assets.forEach(a => {
             const c = a.asset_class;
             if (!rowTotals[c]) rowTotals[c] = 0;
             rowTotals[c] += a.val;
-            grandTotal += a.val;
         });
-
-        const grandTotalMan = Math.floor(grandTotal / 10000).toLocaleString();
 
         html += `<tr>`;
         html += `<td class="s-date">${y}/${parseInt(m)}/${parseInt(d)}</td>`;
-        html += `<td class="s-total">${grandTotalMan}</td>`;
 
+        let rowHtml = '';
         FIXED_ORDER.forEach(cls => {
             const val = rowTotals[cls] || 0;
             let display = '-';
             if (val !== 0) {
-                display = Math.floor(val / 10000).toLocaleString();
+                const man = toManFloor(val);
+                grandTotalMan += man;
+                display = man.toLocaleString();
             }
             const color = val === 0 ? '#aaa' : '#000';
-            html += `<td style="color:${color}">${display}</td>`;
+            rowHtml += `<td style="color:${color}">${display}</td>`;
         });
+        html += `<td class="s-total">${grandTotalMan.toLocaleString()}</td>`;
+        html += rowHtml;
         html += `</tr>`;
     });
 
@@ -1994,9 +1998,9 @@ function renderStreamChart(forPrint = false) {
                         footer: function(tooltipItems) {
                             let sum = 0;
                             tooltipItems.forEach(function(tooltipItem) {
-                                sum += tooltipItem.parsed.y;
+                                sum += toManFloor(tooltipItem.parsed.y);
                             });
-                            return '合計: ' + formatMan(sum);
+                            return '合計: ' + sum.toLocaleString() + '万円';
                         }
                     }
                 },
@@ -2045,32 +2049,32 @@ function renderStreamTable() {
     history.forEach(record => {
         const [y, m, d] = record.date.split('-');
         let rowTotals = {};
-        let grandTotal = 0;
+        let grandTotalMan = 0;
         
         record.assets.forEach(a => {
             const c = a.asset_class;
             if (!rowTotals[c]) rowTotals[c] = 0;
             rowTotals[c] += a.val;
-            grandTotal += a.val;
         });
-
-        // 合計欄：万円単位
-        const grandTotalMan = Math.floor(grandTotal / 10000).toLocaleString();
 
         html += `<tr>`;
         html += `<td>${y}/${parseInt(m)}/${parseInt(d)}</td>`;
-        html += `<td class="cell-val" style="font-weight:bold;">${grandTotalMan}</td>`;
         
+        let rowHtml = '';
         FIXED_ORDER.forEach(cls => {
             const val = rowTotals[cls] || 0;
             // 万円単位に変換して、¥記号はつけない
             let display = '-';
             if (val !== 0) {
-                display = Math.floor(val / 10000).toLocaleString();
+                const man = toManFloor(val);
+                grandTotalMan += man;
+                display = man.toLocaleString();
             }
             const color = val === 0 ? '#cbd5e1' : 'inherit';
-            html += `<td class="cell-val" style="color:${color}">${display}</td>`;
+            rowHtml += `<td class="cell-val" style="color:${color}">${display}</td>`;
         });
+        html += `<td class="cell-val" style="font-weight:bold;">${grandTotalMan.toLocaleString()}</td>`;
+        html += rowHtml;
         html += `</tr>`;
     });
 
